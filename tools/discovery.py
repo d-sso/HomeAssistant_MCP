@@ -9,39 +9,33 @@ def init(client: HAClient) -> None:
     _client = client
 
 
+# HA exposes its registries only over the WebSocket API, never over REST.
 async def _entity_registry() -> list[dict]:
-    try:
-        return await _client.get("/api/config/entity_registry/entries")
-    except Exception:
-        return await _client.get("/api/config/entity_registry")
+    return await _client.ws_command("config/entity_registry/list")
 
 
 async def _area_registry() -> list[dict]:
-    try:
-        return await _client.get("/api/config/area_registry/list")
-    except Exception:
-        return []
+    return await _client.ws_command("config/area_registry/list")
 
 
 async def _floor_registry() -> list[dict]:
+    # Floors require HA 2024.x+; tolerate older instances that lack the command.
     try:
-        return await _client.get("/api/config/floor_registry/list")
+        return await _client.ws_command("config/floor_registry/list")
     except Exception:
         return []
 
 
 async def _label_registry() -> list[dict]:
+    # Labels require HA 2024.x+; tolerate older instances that lack the command.
     try:
-        return await _client.get("/api/config/label_registry/list")
+        return await _client.ws_command("config/label_registry/list")
     except Exception:
         return []
 
 
 async def _device_registry() -> list[dict]:
-    try:
-        return await _client.get("/api/config/device_registry/list")
-    except Exception:
-        return []
+    return await _client.ws_command("config/device_registry/list")
 
 
 def _build_area_floor_map(areas: list[dict]) -> dict[str, str | None]:

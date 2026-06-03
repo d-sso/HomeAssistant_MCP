@@ -111,3 +111,63 @@ async def test_post_sends_json_body(client):
 def json_body(route) -> dict:
     import json
     return json.loads(route.calls[0].request.content)
+
+
+# ── ws_command ──────────────────────────────────────────────────────────────
+
+class _FakeWS:
+    """Minimal async context manager mimicking a websockets connection.
+
+    Pops queued server messages on recv() and records what the client sends.
+    """
+
+    def __init__(self, server_messages):
+        self._incoming = [__import__("json").dumps(m) for m in server_messages]
+        self.sent = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def recv(self):
+        return self._incoming.pop(0)
+
+    async def send(self, raw):
+        self.sent.append(__import__("json").loads(raw))
+
+
+def test_ws_url_derivation(config):
+    assert HAClient(config)._ws_url() == "ws://ha.test:8123/api/websocket"
+    secure = Config(ha_url="https://x.example.com", ha_token="t")
+    assert HAClient(secure)._ws_url() == "wss://x.example.com/api/websocket"
+
+
+@pytest.mark.asyncio
+async def test_ws_command_auth_and_result(client, monkeypatch):
+    fake = _FakeWS([
+        {"type": "auth_required"},
+        {"type": "auth_ok"},
+        {"id": 1, "type": "result", "success": True, "result": [{"area_id": "bedroom"}]},
+    ])
+    monkeypatch.setattr("ha_client.websockets.connect", lambda *a, **k: fake)
+
+    result = await client.ws_command("config/area_registry/list")
+
+    assert result == [{"area_id": "bedroom"}]
+    assert fake.sent[0] == {"type": "auth", "access_token": "test-token"}
+    assert fake.sent[1] == {"id": 1, "type": "config/area_registry/list"}
+
+
+@pytest.mark.asyncio
+async def test_ws_command_raises_on_failure(client, monkeypatch):
+    fake = _FakeWS([
+        {"type": "auth_required"},
+        {"type": "auth_ok"},
+        {"id": 1, "type": "result", "success": False, "error": {"code": "unknown_command"}},
+    ])
+    monkeypatch.setattr("ha_client.websockets.connect", lambda *a, **k: fake)
+
+    with pytest.raises(RuntimeError, match="unknown_command"):
+        await client.ws_command("config/label_registry/list")
